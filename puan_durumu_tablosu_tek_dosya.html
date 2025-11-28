@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Puan Durumu Tablosu</title>
+  <style>
+    :root{--accent:#c92a2a;--muted:#6b6b6b}
+    *{box-sizing:border-box}
+    body{font-family:Inter,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#f6f7fb;color:#111}
+    .container{max-width:980px;margin:32px auto;padding:20px;background:#fff;border-radius:12px;box-shadow:0 6px 24px rgba(20,20,30,0.06)}
+    h1{margin:0 0 14px;font-size:20px}
+    p.lead{margin:0 0 18px;color:var(--muted)}
+    form.controls{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+    form.controls input, form.controls button, form.controls select{padding:8px 10px;border-radius:8px;border:1px solid #e3e6ee}
+    form.controls input[type="number"]{width:88px}
+    table{width:100%;border-collapse:collapse;margin-top:8px}
+    thead th{background:#fafbff;text-align:left;padding:10px 12px;border-bottom:1px solid #eef1fb;font-weight:600;color:#333}
+    tbody td{padding:10px 12px;border-bottom:1px solid #f2f4fb}
+    tbody tr:hover{background:#f8f9ff}
+    .pos{width:36px;text-align:center}
+    .team{min-width:160px}
+    .right{text-align:right}
+    .actions{display:flex;gap:6px}
+    button.primary{background:var(--accent);color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer}
+    button.ghost{background:transparent;border:1px solid #e3e6ee;padding:8px 10px;border-radius:8px;cursor:pointer}
+    .small{font-size:13px;padding:6px 8px}
+    .note{margin-top:12px;color:var(--muted);font-size:13px}
+    @media (max-width:720px){.controls{flex-direction:column}table thead{display:none}tbody td{display:block;padding:8px}tbody tr{margin-bottom:10px;border-radius:8px;border:1px solid #f0f2fb}td.row-label{font-weight:600;width:40%}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Puan Durumu Tablosu</h1>
+    <p class="lead">Takımları ekleyip istatistikleri girin. Puanlar ve averaj otomatik hesaplanır. Sıralama puan, averaj ve atılan gole göre yapılır.</p>
+
+    <form id="addForm" class="controls" onsubmit="return false">
+      <input id="teamName" placeholder="Takım adı" required>
+      <input id="w" type="number" min="0" placeholder="G" title="Galibiyet">
+      <input id="d" type="number" min="0" placeholder="B" title="Beraberlik">
+      <input id="l" type="number" min="0" placeholder="M" title="Mağlubiyet">
+      <input id="gf" type="number" min="0" placeholder="A" title="Atılan">
+      <input id="ga" type="number" min="0" placeholder="Y" title="Yenilen">
+      <button class="primary" id="addBtn">Ekle</button>
+      <button class="ghost" id="resetBtn" type="button">Temizle</button>
+    </form>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+      <div class="actions">
+        <button class="small ghost" id="sortBtn">Sırala (Puan)</button>
+        <button class="small ghost" id="saveBtn">Kaydet</button>
+        <button class="small ghost" id="loadBtn">Yükle</button>
+        <button class="small ghost" id="exportBtn">CSV Dışa Aktar</button>
+        <input id="importFile" type="file" accept=".csv" style="display:none">
+        <button class="small ghost" id="importBtn">CSV İçe Aktar</button>
+      </div>
+    </div>
+
+    <table id="table">
+      <thead>
+        <tr>
+          <th class="pos">#</th>
+          <th class="team">Takım</th>
+          <th>O</th>
+          <th>G</th>
+          <th>B</th>
+          <th>M</th>
+          <th>A</th>
+          <th>Y</th>
+          <th>AV</th>
+          <th>P</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <p class="note">Not: Satır üzerindeki hücrelere çift tıklayıp düzenleyebilirsiniz. Değişiklikler otomatik hesaplanır.</p>
+  </div>
+
+  <script type="module">
+  // Ortak senkron puan durumu için Firebase Realtime Database entegrasyonu
+  // 1) https://console.firebase.google.com adresinden yeni proje aç
+  // 2) Realtime Database aktif et
+  // 3) Web App ekle ve aşağıdaki config alanına kendi bilgilerini yapıştır
+
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDnacB0k1LKay8JFhbprw01WeLIeeeMXh4",
+    authDomain: "gokozan-fc-ligi.firebaseapp.com",
+    databaseURL: "https://gokozan-fc-ligi-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "gokozan-fc-ligi",
+    storageBucket: "gokozan-fc-ligi.firebasestorage.app",
+    messagingSenderId: "525553851188",
+    appId: "1:525553851188:web:5ed38f950a22cf8dfce361"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+  const dbRef = ref(db, 'standings');
+
+  let teams = [];
+  const tbody = document.querySelector('#table tbody');
+
+  function recalc(t){
+    t.mp = (t.w|0) + (t.d|0) + (t.l|0);
+    t.gd = (t.gf|0) - (t.ga|0);
+    t.pts = (t.w|0) * 3 + (t.d|0);
+    return t;
+  }
+
+  function sortTeams(){
+    teams.sort((a,b)=>{
+      if(b.pts !== a.pts) return b.pts - a.pts;
+      if(b.gd !== a.gd) return b.gd - a.gd;
+      return (b.gf|0) - (a.gf|0);
+    });
+  }
+
+  function render(){
+    sortTeams();
+    tbody.innerHTML = '';
+    teams.forEach((t,i)=>{
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="pos">${i+1}</td>
+        <td contenteditable data-field="name">${t.name}</td>
+        <td>${t.mp}</td>
+        <td contenteditable data-field="w">${t.w}</td>
+        <td contenteditable data-field="d">${t.d}</td>
+        <td contenteditable data-field="l">${t.l}</td>
+        <td contenteditable data-field="gf">${t.gf}</td>
+        <td contenteditable data-field="ga">${t.ga}</td>
+        <td>${t.gd}</td>
+        <td>${t.pts}</td>
+      `;
+      tr.querySelectorAll('[contenteditable]').forEach(el=>{
+        el.addEventListener('blur', ()=>{
+          const field = el.dataset.field;
+          let val = el.innerText.trim();
+          if(field === 'name') t.name = val;
+          else t[field] = parseInt(val) || 0;
+          recalc(t);
+          sync();
+        });
+      });
+      tbody.appendChild(tr);
+    });
+  }
+
+  function sync(){
+    set(dbRef, teams);
+  }
+
+  onValue(dbRef, (snapshot)=>{
+    const data = snapshot.val();
+    if(data){
+      teams = data.map(recalc);
+      render();
+    }
+  });
+
+  document.getElementById('addBtn').addEventListener('click', ()=>{
+    const name = document.getElementById('teamName').value.trim() || 'Takım';
+    const w = parseInt(document.getElementById('w').value) || 0;
+    const d = parseInt(document.getElementById('d').value) || 0;
+    const l = parseInt(document.getElementById('l').value) || 0;
+    const gf = parseInt(document.getElementById('gf').value) || 0;
+    const ga = parseInt(document.getElementById('ga').value) || 0;
+    const t = recalc({name, w, d, l, gf, ga});
+    teams.push(t);
+    sync();
+    document.getElementById('addForm').reset();
+  });
+</script>
+</body>
+</html>
